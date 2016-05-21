@@ -28,6 +28,27 @@ start:
         cmp ecx, 512        ; Check if the loop counter is at 512 (meaning we have reached 1GiB)
         jne .map_p2_table   ; if we haven't, jump back to the start
 
+    ; Move the p4_table address to the control register that needs to hold it
+    mov eax, p4_table
+    mov cr3, eax ; cr3 needs to be moved to from another register
+
+    ; Enable Physical Address Extension
+    mov eax, cr4
+    or eax, 1 << 5
+    mov cr4, eax
+
+    ; Enable Long Mode
+    mov ecx, 0xC0000080 ; The Model Specific Register we need to alter
+    rdmsr               ; Read it in to eax
+    or eax, 1 << 8      ; Enable the Long Mode bit
+    wrmsr               ; Write it back
+
+    ; And finally, enable Paging
+    mov eax, cr0
+    or eax, 1 << 31
+    or eax, 1 << 16
+    mov cr0, eax
+
     ; Print a message
     mov word [0xb80a0], 0x0248 ; H
     mov word [0xb80a2], 0x0265 ; e
