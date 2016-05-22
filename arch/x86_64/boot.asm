@@ -29,7 +29,7 @@ start:
         ; Loop check
         inc ecx             ; Increment the loop counter
         cmp ecx, 512        ; Check if the loop counter is at 512 (meaning we have reached 1GiB)
-        jne .map_p2_table   ; if we haven't, jump back to the start
+        jne .map_p2_table   ; If we haven't, jump back to the start
 
     ; Move the p4_table address to the control register that needs to hold it
     mov eax, p4_table
@@ -64,12 +64,26 @@ start:
     ; Finally, jump to long mode
     jmp gdt64.code:long_mode_start
 
-    ;; Print a message
+bits 64
 
-    ; Unreachable but just to be sure
-    mov word [0xb8000], 0x0265 ; e
-    mov word [0xb8002], 0x0221 ; !
+long_mode_start:
+    call asm_print
     hlt
+
+asm_print:
+    mov ecx, 0              ; null the loop counter
+    .asm_print_loop:
+        ; Write the character to the target location
+        mov ah, 0x02
+        mov al, [hello_world + ecx]
+        mov word [0xb8000 + ecx * 2], ax
+
+        ; Loop check
+        inc ecx                             ; Increment the loop counter
+        cmp byte [hello_world + ecx], 0x0   ; Check if the new character is null
+        jne .asm_print_loop                 ; If it isn't, continue
+
+    ret
 
 
 section .bss
@@ -103,10 +117,7 @@ gdt64: ; The full (read-only) GDT
         dq gdt64                ; Address
 
 
-section .text
-bits 64
+section .data
 
-long_mode_start:
-    mov rax, 0x2f592f412f4b2f4f
-    mov qword [0xb8000], rax
-    hlt
+hello_world:
+    db "Hello, World!",0
