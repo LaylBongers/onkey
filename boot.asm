@@ -1,9 +1,12 @@
+; Externally available labels
 global start
-
 
 section .text
 bits 32
+
 start:
+    ;; Set up the Page Table and enable Long Mode
+
     ; Point the first p4_table entry to the first p3_table entry
     mov eax, p3_table
     or eax, 0b11 ; write, read
@@ -43,31 +46,33 @@ start:
     or eax, 1 << 8      ; Enable the Long Mode bit
     wrmsr               ; Write it back
 
-    ; And finally, enable Paging
+    ; Finally, enable Paging
     mov eax, cr0
     or eax, 1 << 31
     or eax, 1 << 16
     mov cr0, eax
 
-    ; Print a message
-    mov word [0xb80a0], 0x0248 ; H
-    mov word [0xb80a2], 0x0265 ; e
-    mov word [0xb80a4], 0x026c ; l
-    mov word [0xb80a6], 0x026c ; l
-    mov word [0xb80a8], 0x026f ; o
-    mov word [0xb80aa], 0x022c ; ,
-    mov word [0xb80ac], 0x0220 ;
-    mov word [0xb80ae], 0x0277 ; w
-    mov word [0xb80b0], 0x026f ; o
-    mov word [0xb80b2], 0x0272 ; r
-    mov word [0xb80b4], 0x026c ; l
-    mov word [0xb80b6], 0x0264 ; d
-    mov word [0xb80b8], 0x0221 ; !
+    ; Set up the (unusued but still required) GDT
+    lgdt [gdt64.pointer]
+
+    ; Update segment registers
+    mov ax, gdt64.data
+    mov ss, ax
+    mov ds, ax
+    mov es, ax
+
+    ; Finally, jump to long mode
+    jmp gdt64.code:long_mode_start
+
+    ;; Print a message
+
+    ; Unreachable but just to be sure
+    mov word [0xb8000], 0x0265 ; e
+    mov word [0xb8002], 0x0221 ; !
     hlt
 
 
 section .bss
-
 align 4096
 
 p4_table:
@@ -76,3 +81,32 @@ p3_table:
     resb 4096
 p2_table:
     resb 4096
+
+
+section .rodata
+
+gdt64: ; The full (read-only) GDT
+    dq 0 ; It's a zero entry
+    .code: equ $ - gdt64
+        dq (1<<44) | (1<<47) | (1<<41) | (1<<43) | (1<<53) ; Code segment
+    .data: equ $ - gdt64
+        dq (1<<44) | (1<<47) | (1<<41) ; Data segment
+        ; In the code and data segments:
+        ; 44: ‘descriptor type’: This has to be 1 for code and data segments
+        ; 47: ‘present’: This is set to 1 if the entry is valid
+        ; 41: ‘read/write’: If this is a code segment, 1 means that it’s readable
+        ; 43: ‘executable’: Set to `1 for code segments
+        ; 53: ‘64-bit’: If this is a 64-bit GDT, this should be set
+
+    .pointer: ; A data structure that defines where the GDT is
+        dw .pointer - gdt64 - 1 ; Length
+        dq gdt64                ; Address
+
+
+section .text
+bits 64
+
+long_mode_start:
+    mov rax, 0x2f592f412f4b2f4f
+    mov qword [0xb8000], rax
+    hlt
