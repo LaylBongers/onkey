@@ -2,9 +2,17 @@
 global start
 
 section .text
+
 bits 32
 
 start:
+    ; Set up the stack
+    mov esp, stack_end
+
+    call check_multiboot
+    call check_cpuid
+    call check_long_mode
+
     ;; Set up the Page Table and enable Long Mode
 
     ; Point the first p4_table entry to the first p3_table entry
@@ -64,10 +72,80 @@ start:
     ; Finally, jump to long mode
     jmp gdt64.code:long_mode_start
 
+check_multiboot:
+    cmp eax, 0x36d76289
+    jne .no_multiboot
+    ret
+.no_multiboot:
+    mov al, "0"
+    jmp boot_error
+
+check_cpuid:
+    ; Check if CPUID is supported by attempting to flip the ID bit (bit 21)
+    ; in the FLAGS register. If we can flip it, CPUID is available.
+
+    ; Copy FLAGS in to EAX via stack
+    pushfd
+    pop eax
+
+    ; Copy to ECX as well for comparing later on
+    mov ecx, eax
+
+    ; Flip the ID bit
+    xor eax, 1 << 21
+
+    ; Copy EAX to FLAGS via the stack
+    push eax
+    popfd
+
+    ; Copy FLAGS back to EAX (with the flipped bit if CPUID is supported)
+    pushfd
+    pop eax
+
+    ; Restore FLAGS from the old version stored in ECX (i.e. flipping the
+    ; ID bit back if it was ever flipped).
+    push ecx
+    popfd
+
+    ; Compare EAX and ECX. If they are equal then that means the bit
+    ; wasn't flipped, and CPUID isn't supported.
+    cmp eax, ecx
+    je .no_cpuid
+    ret
+.no_cpuid:
+    mov al, "1"
+    jmp boot_error
+
+check_long_mode:
+    ; test if extended processor info in available
+    mov eax, 0x80000000    ; implicit argument for cpuid
+    cpuid                  ; get highest supported argument
+    cmp eax, 0x80000001    ; it needs to be at least 0x80000001
+    jb .no_long_mode       ; if it's less, the CPU is too old for long mode
+
+    ; use extended info to test if long mode is available
+    mov eax, 0x80000001    ; argument for extended processor info
+    cpuid                  ; returns various feature bits in ecx and edx
+    test edx, 1 << 29      ; test if the LM-bit is set in the D-register
+    jz .no_long_mode       ; If it's not set, there is no long mode
+    ret
+.no_long_mode:
+    mov al, "2"
+    jmp boot_error
+
+boot_error:
+    mov dword [0xb8000], 0x4f524f45
+    mov dword [0xb8004], 0x4f3a4f52
+    mov dword [0xb8008], 0x4f204f20
+    mov byte  [0xb800a], al
+    hlt
+
 bits 64
 
 long_mode_start:
-    ; Set the stack pointer
+    ; Set up the stack
+    ; This will write over the previous stack from the 32-bit section, which we
+    ;  won't need anymore anyways
     mov rsp, stack_end
 
     ; Print a hello world
@@ -84,13 +162,10 @@ long_mode_start:
 
     hlt
 
-guard:
-    jmp guard
-
 asm_print:
     ; Callee responsibilities
-    push rbp        ; store caller's stack frame
-    mov rbp, rsp    ; make current stack frame the stack pointer
+    push rbp        ; Store caller's stack frame
+    mov rbp, rsp    ; Make the new stack frame equal the current stack pointer
 
     ; Get the position on screen we need to print at and multiply it by 2
     mov rbx, [rbp+24]
@@ -110,9 +185,9 @@ asm_print:
         mov word [0xb8000 + rbx + rcx*2], ax
 
         ; Loop check
-        inc ecx                             ; Increment the loop counter
+        inc rcx                     ; Increment the loop counter
         cmp byte [rdx + rcx], 0x0   ; Check if the new character is null
-        jne .asm_print_loop                 ; If it isn't, continue
+        jne .asm_print_loop         ; If it isn't, continue
 
     ; Callee responsibilities
     mov rsp, rbp    ; Remove all local pushes
@@ -159,6 +234,3 @@ hello_world_msg:
 
 hello_again_msg:
     db "Hello, Again!",0
-
-guard_msg:
-    db "Leaked into the guard!",0
