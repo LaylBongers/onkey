@@ -1,8 +1,9 @@
-; Externally available labels
 global start
 
-section .text
+extern start_long_mode
+extern stack_end
 
+section .text
 bits 32
 
 start:
@@ -70,15 +71,15 @@ start:
     mov es, ax
 
     ; Finally, jump to long mode
-    jmp gdt64.code:long_mode_start
+    jmp gdt64.code:start_long_mode
 
 check_multiboot:
     cmp eax, 0x36d76289
     jne .no_multiboot
     ret
-.no_multiboot:
-    mov al, "0"
-    jmp boot_error
+    .no_multiboot:
+        mov al, "0"
+        jmp boot_error
 
 check_cpuid:
     ; Check if CPUID is supported by attempting to flip the ID bit (bit 21)
@@ -112,9 +113,9 @@ check_cpuid:
     cmp eax, ecx
     je .no_cpuid
     ret
-.no_cpuid:
-    mov al, "1"
-    jmp boot_error
+    .no_cpuid:
+        mov al, "1"
+        jmp boot_error
 
 check_long_mode:
     ; test if extended processor info in available
@@ -129,9 +130,9 @@ check_long_mode:
     test edx, 1 << 29      ; test if the LM-bit is set in the D-register
     jz .no_long_mode       ; If it's not set, there is no long mode
     ret
-.no_long_mode:
-    mov al, "2"
-    jmp boot_error
+    .no_long_mode:
+        mov al, "2"
+        jmp boot_error
 
 boot_error:
     mov dword [0xb8000], 0x4f524f45
@@ -139,60 +140,6 @@ boot_error:
     mov dword [0xb8008], 0x4f204f20
     mov byte  [0xb800a], al
     hlt
-
-bits 64
-
-long_mode_start:
-    ; Set up the stack
-    ; This will write over the previous stack from the 32-bit section, which we
-    ;  won't need anymore anyways
-    mov rsp, stack_end
-
-    ; Print a hello world
-    push 2
-    push hello_world_msg
-    call asm_print
-    add esp, 16
-
-    ; Print a hello again
-    push 82
-    push hello_again_msg
-    call asm_print
-    add esp, 16
-
-    hlt
-
-asm_print:
-    ; Callee responsibilities
-    push rbp        ; Store caller's stack frame
-    mov rbp, rsp    ; Make the new stack frame equal the current stack pointer
-
-    ; Get the position on screen we need to print at and multiply it by 2
-    mov rbx, [rbp+24]
-    mov rax, 2
-    mul rbx
-    mov rbx, rax
-
-    ; Get the text we need to print
-    mov rdx, [rbp+16]
-
-    ; Perform the actual print loop
-    mov rcx, 0 ; null the loop counter
-    .asm_print_loop:
-        ; Write the character to the target location
-        mov ah, 0x02
-        mov al, [rdx + rcx]
-        mov word [0xb8000 + rbx + rcx*2], ax
-
-        ; Loop check
-        inc rcx                     ; Increment the loop counter
-        cmp byte [rdx + rcx], 0x0   ; Check if the new character is null
-        jne .asm_print_loop         ; If it isn't, continue
-
-    ; Callee responsibilities
-    mov rsp, rbp    ; Remove all local pushes
-    pop rbp         ; Restore caller's stack frame
-    ret
 
 
 section .bss
@@ -205,9 +152,6 @@ p3_table:
 p2_table:
     resb 4096
 
-stack_begin:
-    resb 4096   ; Reserve 4 KiB stack space
-stack_end:
 
 section .rodata
 
@@ -228,9 +172,3 @@ gdt64: ; The full (read-only) GDT
     .pointer: ; A data structure that defines where the GDT is
         dw .pointer - gdt64 - 1 ; Length
         dq gdt64                ; Address
-
-hello_world_msg:
-    db "Hello, World!",0
-
-hello_again_msg:
-    db "Hello, Again!",0
